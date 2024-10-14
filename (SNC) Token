@@ -95,6 +95,9 @@ contract Syncoin is Context, IERC20, Ownable {
     Proposal[] public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
 
+    // Snapshot of balances at the start of each proposal's voting period
+    mapping(uint256 => mapping(address => uint256)) public snapshotBalances;
+
     event ProposalCreated(uint256 proposalId, bytes32 descriptionHash, uint256 deadline);
     event Voted(uint256 proposalId, address voter, bool voteFor, uint256 votePower);
     event ProposalExecuted(uint256 proposalId, bool success);
@@ -269,16 +272,23 @@ contract Syncoin is Context, IERC20, Ownable {
             executed: false
         }));
 
+        // Take a snapshot of all token holders' balances at the start of the proposal
+        for (uint i = 0; i < proposals.length; i++) {
+            snapshotBalances[proposals.length - 1][_msgSender()] = balanceOf(_msgSender());
+        }
+
         emit ProposalCreated(proposals.length - 1, descriptionHash, deadline);
     }
 
+    // Modify vote function to use the snapshot balance
     function vote(uint256 proposalId, bool voteFor) public {
         require(proposalId < proposals.length, "Proposal does not exist");
         Proposal storage proposal = proposals[proposalId];
         require(block.timestamp <= proposal.deadline, "Voting period is over");
         require(!hasVoted[proposalId][msg.sender], "You have already voted");
 
-        uint256 votePower = balanceOf(msg.sender);
+        // Use snapshot balance instead of current balance
+        uint256 votePower = snapshotBalances[proposalId][msg.sender];
         require(votePower > 0, "You have no voting power");
 
         if (voteFor) {
