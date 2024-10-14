@@ -1,60 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-abstract contract Context {
-    function _msgSender() internal view virtual returns (address) {
-        return msg.sender;
-    }
-}
-
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-}
-
-abstract contract Ownable is Context {
-    address private _owner;
-
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    constructor() {
-        _transferOwnership(_msgSender());
-    }
-
-    modifier onlyOwner() {
-        _checkOwner();
-        _;
-    }
-
-    function owner() public view virtual returns (address) {
-        return _owner;
-    }
-
-    function _checkOwner() internal view virtual {
-        require(owner() == _msgSender(), "Ownable: caller is not the owner");
-    }
-
-    function renounceOwnership() public virtual onlyOwner {
-        _transferOwnership(address(0));
-    }
-
-    function transferOwnership(address newOwner) public virtual onlyOwner {
-        require(newOwner != address(0), "Ownable: new owner is the zero address");
-        _transferOwnership(newOwner);
-    }
-
-    function _transferOwnership(address newOwner) internal virtual {
-        address oldOwner = _owner;
-        _owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
-    }
-}
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Snapshot.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 interface IUniswapV2Factory {
     function createPair(address tokenA, address tokenB) external returns (address pair);
@@ -82,37 +32,29 @@ interface IUniswapV2Router02 {
     ) external payable returns (uint amountToken, uint amountETH, uint liquidity);
 }
 
-contract Syncoin is Context, IERC20, Ownable {
-    // Governance proposal structure with off-chain storage
+contract Syncoin is ERC20, ERC20Snapshot, Ownable, ReentrancyGuard {
+    // Governance proposal structure
     struct Proposal {
-        bytes32 descriptionHash; // Off-chain hash (IPFS, etc.)
+        bytes32 descriptionHash;
         uint256 voteCountFor;
         uint256 voteCountAgainst;
         uint256 deadline;
         bool executed;
+        uint256 snapshotId; // Snapshot ID for governance voting
     }
 
     Proposal[] public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
-
-    // Snapshot of balances at the start of each proposal's voting period
-    mapping(uint256 => mapping(address => uint256)) public snapshotBalances;
 
     event ProposalCreated(uint256 proposalId, bytes32 descriptionHash, uint256 deadline);
     event Voted(uint256 proposalId, address voter, bool voteFor, uint256 votePower);
     event ProposalExecuted(uint256 proposalId, bool success);
 
     // Token properties
-    mapping (address => uint256) private _balances;
-    mapping (address => mapping (address => uint256)) private _allowances;
-    mapping (address => bool) public _isExcludedFromFee;
-
     uint256 public _buyTaxFee = 1;
     uint256 public _sellTaxFee = 1;
     uint8 private constant _decimals = 18;
     uint256 private constant _tTotal = 1618033 * 10 ** _decimals;
-    string private constant _name = unicode"Syncoin";
-    string private constant _symbol = unicode"SNC";
     uint256 public _taxSwapThreshold = 3000 * 10 ** _decimals;
     uint256 public _maxWalletHoldingLimit = 16180 * 10 ** _decimals;
     uint256 public _maxSwapAmount = 5000 * 10 ** _decimals;
@@ -123,14 +65,6 @@ contract Syncoin is Context, IERC20, Ownable {
     address private uniswapV2Pair;
     bool private inSwap = false;
     bool private swapEnabled = true;
-    uint256 private _status;
-
-    modifier nonReentrant() {
-        require(_status != 1, "Reentrant call");
-        _status = 1;
-        _;
-        _status = 0;
-    }
 
     modifier lockTheSwap {
         inSwap = true;
@@ -138,74 +72,33 @@ contract Syncoin is Context, IERC20, Ownable {
         inSwap = false;
     }
 
-    constructor() {
+    constructor() ERC20("Syncoin", "SNC") {
         IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).createPair(address(this), _uniswapV2Router.WETH());
         uniswapV2Router = _uniswapV2Router;
 
-        _balances[_msgSender()] = _tTotal;
-        _isExcludedFromFee[owner()] = true;
-        _isExcludedFromFee[address(this)] = true;
-        _isExcludedFromFee[_taxCollector] = true;
-
-        emit Transfer(address(0), _msgSender(), _tTotal);
+        _mint(_msgSender(), _tTotal);
     }
 
     function name() public pure returns (string memory) {
-        return _name;
+        return "Syncoin";
     }
 
     function symbol() public pure returns (string memory) {
-        return _symbol;
+        return "SNC";
     }
 
     function decimals() public pure returns (uint8) {
         return _decimals;
     }
 
-    function totalSupply() public pure override returns (uint256) {
-        return _tTotal;
-    }
-
-    function balanceOf(address account) public view override returns (uint256) {
-        return _balances[account];
-    }
-
-    function transfer(address recipient, uint256 amount) public override returns (bool) {
-        _transfer(_msgSender(), recipient, amount);
-        return true;
-    }
-
-    function allowance(address owner, address spender) public view override returns (uint256) {
-        return _allowances[owner][spender];
-    }
-
-    function approve(address spender, uint256 amount) public override returns (bool) {
-        _approve(_msgSender(), spender, amount);
-        return true;
-    }
-
-    function transferFrom(address sender, address recipient, uint256 amount) public override returns (bool) {
-        _transfer(sender, recipient, amount);
-        _approve(sender, _msgSender(), _allowances[sender][_msgSender()] - amount);
-        return true;
-    }
-
-    function _approve(address owner, address spender, uint256 amount) private {
-        require(owner != address(0), "ERC20: approve from the zero address");
-        require(spender != address(0), "ERC20: approve to the zero address");
-        _allowances[owner][spender] = amount;
-        emit Approval(owner, spender, amount);
-    }
-
-    function _transfer(address from, address to, uint256 amount) private nonReentrant {
+    function _transfer(address from, address to, uint256 amount) internal override nonReentrant {
         require(from != address(0), "ERC20: transfer from the zero address");
         require(to != address(0), "ERC20: transfer to the zero address");
         require(amount > 0, "Transfer amount must be greater than zero");
 
         uint256 taxAmount = 0;
-
-        if (!_isExcludedFromFee[from] && !_isExcludedFromFee[to]) {
+        if (!_isExcludedFromFee(from, to)) {
             if (to != uniswapV2Pair) {
                 require(balanceOf(to) + amount <= _maxWalletHoldingLimit, "Exceeds max wallet limit");
             }
@@ -242,7 +135,7 @@ contract Syncoin is Context, IERC20, Ownable {
 
     function swapTokensForEth(uint256 tokenAmount) private lockTheSwap {
         if (tokenAmount == 0) return;
-        address[] memory path = new address[](2);
+        address;
         path[0] = address(this);
         path[1] = uniswapV2Router.WETH();
         _approve(address(this), address(uniswapV2Router), tokenAmount);
@@ -264,31 +157,27 @@ contract Syncoin is Context, IERC20, Ownable {
 
     function createProposal(bytes32 descriptionHash) public onlyOwner {
         uint256 deadline = block.timestamp + 3 days;
+        uint256 snapshotId = _snapshot(); // Take a snapshot of all token holders' balances
+
         proposals.push(Proposal({
             descriptionHash: descriptionHash,
             voteCountFor: 0,
             voteCountAgainst: 0,
             deadline: deadline,
-            executed: false
+            executed: false,
+            snapshotId: snapshotId
         }));
-
-        // Take a snapshot of all token holders' balances at the start of the proposal
-        for (uint i = 0; i < proposals.length; i++) {
-            snapshotBalances[proposals.length - 1][_msgSender()] = balanceOf(_msgSender());
-        }
 
         emit ProposalCreated(proposals.length - 1, descriptionHash, deadline);
     }
 
-    // Modify vote function to use the snapshot balance
     function vote(uint256 proposalId, bool voteFor) public {
         require(proposalId < proposals.length, "Proposal does not exist");
         Proposal storage proposal = proposals[proposalId];
         require(block.timestamp <= proposal.deadline, "Voting period is over");
         require(!hasVoted[proposalId][msg.sender], "You have already voted");
 
-        // Use snapshot balance instead of current balance
-        uint256 votePower = snapshotBalances[proposalId][msg.sender];
+        uint256 votePower = balanceOfAt(msg.sender, proposal.snapshotId); // Use the snapshot balance
         require(votePower > 0, "You have no voting power");
 
         if (voteFor) {
@@ -301,14 +190,12 @@ contract Syncoin is Context, IERC20, Ownable {
         emit Voted(proposalId, msg.sender, voteFor, votePower);
     }
 
-    // Snapshot Voting Result Submission
     function submitSnapshotResults(uint256 proposalId, uint256 voteCountFor, uint256 voteCountAgainst) public onlyOwner {
         require(proposalId < proposals.length, "Proposal does not exist");
         Proposal storage proposal = proposals[proposalId];
         require(block.timestamp > proposal.deadline, "Voting period has not ended");
         require(!proposal.executed, "Proposal already executed");
 
-        // Store the off-chain voting results on-chain
         proposal.voteCountFor = voteCountFor;
         proposal.voteCountAgainst = voteCountAgainst;
 
@@ -323,3 +210,4 @@ contract Syncoin is Context, IERC20, Ownable {
 
     receive() external payable {}
 }
+
