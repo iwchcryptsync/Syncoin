@@ -107,12 +107,12 @@ contract Syncoin is Context, IERC20, Ownable {
     uint256 public _buyTaxFee = 1;
     uint256 public _sellTaxFee = 1;
     uint8 private constant _decimals = 18;
-    uint256 private constant _tTotal = 19940604369 * 10 ** _decimals;
+    uint256 private constant _tTotal = 1618033 * 10 ** _decimals;
     string private constant _name = unicode"Syncoin";
     string private constant _symbol = unicode"SNC";
-    uint256 public _taxSwapThreshold = 500000 * 10 ** _decimals;
-    uint256 public _maxWalletHoldingLimit = 199406043 * 10 ** _decimals;
-    uint256 public _maxSwapAmount = 50000000 * 10 ** _decimals;
+    uint256 public _taxSwapThreshold = 405 * 10 ** _decimals;
+    uint256 public _maxWalletHoldingLimit = 161 * 10 ** _decimals;
+    uint256 public _maxSwapAmount = 40557 * 10 ** _decimals;
 
     address payable public _taxCollector = payable(0xB685E32702D7c3D5c3C03B81224B8f121E5514db);
 
